@@ -4,11 +4,12 @@ Frontend-only web app for multi-teacher office-hours polling, slot booking, and 
 
 ## Features
 
-- Teacher-created office-hours polls (available hours, slot length, days per week).
-- Student poll responses by class.
-- Automatic "top two" office-hours configuration suggestions after poll close.
+- **People database**: Teachers and students with name, role, and course assignments; login by email only (known accounts).
+- Teacher-created polls with type dropdown: **Office hours** (one per course) or **General** (multiple per course).
+- Student poll responses by class; student dashboard shows all polls for enrolled courses.
+- Automatic "top two" office-hours configuration suggestions for office-hours polls.
 - Slot-based office-hours booking (students pick a concrete slot).
-- Teacher announcements forwarded by email (modular notification layer; SMS-ready extension point).
+- Teacher announcements with course dropdown; forwarded by email (modular notification layer; SMS-ready).
 - School-email auth policy (only `@mta.ca` and `@umoncton.ca` domains).
 
 ## Tech stack
@@ -64,14 +65,15 @@ Frontend-only web app for multi-teacher office-hours polling, slot booking, and 
 
 Use one workbook with one tab per entity. Suggested tab names and columns:
 
-1. `Users`
-   - `email`, `name`, `role`, `createdAt`
+1. **`People`** (V2 – required for login)
+   - `email`, `name`, `role` (teacher/student), `course1`, `course2`, `course3`, `course4`
+   - One row per person. Role determines meaning: teachers list courses they **teach**; students list courses they’re **enrolled in**. Course values = `classId`. Teachers: 2–4 courses; students: same columns. Unused cells left blank.
 2. `Classes`
    - `classId`, `className`, `teacherEmail`, `createdAt`
 3. `Roster`
    - `classId`, `studentEmail`, `addedAt`
 4. `Polls`
-   - `pollId`, `classId`, `teacherEmail`, `title`, `slotMinutes`, `daysPerWeek`, `closesAtIso`, `optionsJson`, `createdAt`
+   - `pollId`, `classId`, `teacherEmail`, `pollType` (office_hours/general), `title`, `slotMinutes`, `daysPerWeek`, `closesAtIso`, `optionsJson`, `createdAt`
 5. `PollResponses`
    - `responseId`, `pollId`, `classId`, `studentEmail`, `selectedOptionKeysJson`, `submittedAtIso`
 6. `OfficeHoursConfigs`
@@ -96,6 +98,11 @@ This is implemented in:
 - `src/services/datastore.ts` (`LocalDataStore.suggestTopConfigs`)
 
 When using Apps Script, implement equivalent logic in the script endpoint for `suggestTopConfigs`.
+
+## Poll types and one-per-course rule
+
+- **Office hours** polls: At most **one** per course. Creating another office-hours poll for the same course is rejected. Used for scheduling office-hours time slots; "Compute top two" applies.
+- **General** polls: Multiple allowed per course. Same form (title, options) but no limit.
 
 ## "One week later" enforcement
 
@@ -137,8 +144,11 @@ The frontend posts JSON:
 ```
 
 Supported action strings currently used by the app:
+- `getPersonByEmail` (email) – lookup for login; returns `Person | null`
+- `getClassesByIds` (classIds) – returns `ClassMembership[]` for display
 - `listClasses`
 - `listPolls`
+- `listPollsForStudent` (courseIds) – returns all polls for enrolled courses
 - `createPoll`
 - `savePollResponse`
 - `suggestTopConfigs`

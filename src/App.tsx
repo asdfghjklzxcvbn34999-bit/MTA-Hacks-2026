@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { appConfig } from "./config";
 import { addDays, prettyDate, toIso } from "./lib/time";
-import { getSessionUser, signInWithEmail, signOut } from "./services/auth";
-import { createDataStore, inferRole } from "./services/datastore";
+import { getSessionUser, signInWithPerson, signOut, updateSession } from "./services/auth";
+import { createDataStore } from "./services/datastore";
 import { createNotificationSender } from "./services/notifications";
 import type {
   Announcement,
@@ -11,6 +11,7 @@ import type {
   OfficeHoursConfig,
   OfficeHoursPoll,
   PollResponse,
+  PollType,
   SessionUser,
   Slot,
   SuggestedConfig
@@ -43,22 +44,43 @@ export default function App() {
 
   async function loadCoreData(user: SessionUser): Promise<void> {
     try {
-      const classMemberships = await dataStore.listClasses(user.email);
-      const nextRole = inferRole(user, classMemberships);
-      const nextSession = { ...user, role: nextRole };
-      setSession(nextSession);
-      setClasses(classMemberships);
-      if (classMemberships.length > 0) {
-        const classId = classMemberships[0].classId;
-        setActiveClassId(classId);
-        const [pollList, slotList, bookingList] = await Promise.all([
-          dataStore.listPolls(classId),
-          dataStore.listSlots(classId),
-          dataStore.listBookings(classId)
-        ]);
+      let effectiveUser = user;
+      if (user.myCourses.length === 0) {
+        const person = await dataStore.getPersonByEmail(user.email);
+        if (person && person.courseIds.length > 0) {
+          const refreshed = updateSession({ myCourses: person.courseIds });
+          if (refreshed) effectiveUser = refreshed;
+          setSession(effectiveUser);
+        }
+      }
+      if (effectiveUser.role === "teacher") {
+        const classMemberships = await dataStore.getClassesByIds(effectiveUser.myCourses);
+        setClasses(classMemberships);
+        if (classMemberships.length > 0) {
+          const classId = classMemberships[0].classId;
+          setActiveClassId(classId);
+          const [pollList, slotList, bookingList] = await Promise.all([
+            dataStore.listPolls(classId),
+            dataStore.listSlots(classId),
+            dataStore.listBookings(classId)
+          ]);
+          setPolls(pollList);
+          setSlots(slotList);
+          setBookings(bookingList);
+        }
+      } else {
+        const pollList = await dataStore.listPollsForStudent(effectiveUser.myCourses);
         setPolls(pollList);
-        setSlots(slotList);
-        setBookings(bookingList);
+        setClasses(await dataStore.getClassesByIds(effectiveUser.myCourses));
+        if (effectiveUser.myCourses.length > 0) {
+          setActiveClassId(effectiveUser.myCourses[0]);
+          const [slotList, bookingList] = await Promise.all([
+            dataStore.listSlots(effectiveUser.myCourses[0]),
+            dataStore.listBookings(effectiveUser.myCourses[0])
+          ]);
+          setSlots(slotList);
+          setBookings(bookingList);
+        }
       }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Failed to load class data.";
@@ -78,16 +100,27 @@ export default function App() {
     if (!session || !activeClassId) {
       return;
     }
-    void (async () => {
-      const [pollList, slotList, bookingList] = await Promise.all([
-        dataStore.listPolls(activeClassId),
-        dataStore.listSlots(activeClassId),
-        dataStore.listBookings(activeClassId)
-      ]);
-      setPolls(pollList);
-      setSlots(slotList);
-      setBookings(bookingList);
-    })();
+    if (session.role === "teacher") {
+      void (async () => {
+        const [pollList, slotList, bookingList] = await Promise.all([
+          dataStore.listPolls(activeClassId),
+          dataStore.listSlots(activeClassId),
+          dataStore.listBookings(activeClassId)
+        ]);
+        setPolls(pollList);
+        setSlots(slotList);
+        setBookings(bookingList);
+      })();
+    } else {
+      void (async () => {
+        const [slotList, bookingList] = await Promise.all([
+          dataStore.listSlots(activeClassId),
+          dataStore.listBookings(activeClassId)
+        ]);
+        setSlots(slotList);
+        setBookings(bookingList);
+      })();
+    }
   }, [session, activeClassId]);
 
   function resetMessage(): void {
@@ -110,22 +143,24 @@ export default function App() {
       return;
     }
     resetMessage();
+    const pollType = (form.get("pollType") as PollType) ?? "office_hours";
     const title = String(form.get("title") ?? "").trim();
     const slotMinutes = Number(form.get("slotMinutes") ?? 30);
     const daysPerWeek = Number(form.get("daysPerWeek") ?? 1);
     const optionRows = String(form.get("options") ?? "")
       .split("\n")
-      .map((line) => line.trim())
+      .map((line: string) => line.trim())
       .filter(Boolean);
-    const options = optionRows.map((line) => {
+    const options = optionRows.map((line: string) => {
       const [day, hours] = line.split(":");
-      const [startHour, endHour] = (hours ?? "").split("-").map((part) => part.trim());
+      const [startHour, endHour] = (hours ?? "").split("-").map((part: string) => part.trim());
       return { day: day.trim(), startHour, endHour };
     });
     const poll: OfficeHoursPoll = {
       pollId: makeId("poll"),
       classId: activeClass.classId,
       teacherEmail: session.email,
+      pollType,
       title,
       slotMinutes,
       daysPerWeek,
@@ -228,7 +263,13 @@ export default function App() {
   }
 
   async function handleAnnouncement(form: FormData): Promise<void> {
-    if (!session || !activeClass) {
+    if (!session) {
+      return;
+    }
+    const classId = String(form.get("classId") ?? activeClassId).trim();
+    const targetClass = classes.find((c) => c.classId === classId);
+    if (!targetClass) {
+      setError("Please select a course.");
       return;
     }
     resetMessage();
@@ -236,7 +277,7 @@ export default function App() {
     const body = String(form.get("body") ?? "").trim();
     const announcement: Announcement = {
       announcementId: makeId("ann"),
-      classId: activeClass.classId,
+      classId: targetClass.classId,
       teacherEmail: session.email,
       subject,
       body,
@@ -277,7 +318,7 @@ export default function App() {
       {classes.length > 0 && (
         <section className="card">
           <label>
-            Active class
+            {session.role === "teacher" ? "Active course" : "Course (for booking slots)"}
             <select value={activeClassId} onChange={(event) => setActiveClassId(event.target.value)}>
               {classes.map((item) => (
                 <option key={item.classId} value={item.classId}>
@@ -296,11 +337,11 @@ export default function App() {
         <>
           <TeacherPollCard onCreatePoll={handleCreatePoll} />
           <TeacherReviewCard polls={polls} onSuggest={handleBuildConfig} />
-          <TeacherAnnouncementCard onSubmit={handleAnnouncement} />
+          <TeacherAnnouncementCard classes={classes} activeClassId={activeClassId} onSubmit={handleAnnouncement} />
         </>
       ) : (
         <>
-          <StudentPollCard polls={polls} onSubmit={handleSubmitResponse} />
+          <StudentPollCard polls={polls} classes={classes} onSubmit={handleSubmitResponse} />
           <StudentBookingCard slots={slots} bookings={bookings} onBook={handleBookSlot} />
         </>
       )}
@@ -310,18 +351,27 @@ export default function App() {
 
 function SignInScreen({ onSignedIn }: { onSignedIn: (user: SessionUser) => void }) {
   const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
-  const [role, setRole] = useState<"teacher" | "student">("student");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    setError("");
+    setLoading(true);
     try {
-      const user = signInWithEmail(email, role, name);
+      const person = await dataStore.getPersonByEmail(email);
+      if (!person) {
+        setError("Account not found. Use a registered @mta.ca or @umoncton.ca email.");
+        setLoading(false);
+        return;
+      }
+      const user = signInWithPerson(person);
       onSignedIn(user);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Sign in failed.";
       setError(message);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -329,23 +379,23 @@ function SignInScreen({ onSignedIn }: { onSignedIn: (user: SessionUser) => void 
     <main className="page center">
       <form className="card form" onSubmit={handleSubmit}>
         <h1>School Sign In</h1>
-        <p className="muted">Only {appConfig.allowedDomains.map((item: string) => `@${item}`).join(" / ")} accounts are allowed.</p>
-        <label>
-          Name
-          <input value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
+        <p className="muted">
+          Only {appConfig.allowedDomains.map((item: string) => `@${item}`).join(" / ")} accounts are allowed.
+        </p>
         <label>
           School email
-          <input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} />
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            disabled={loading}
+            placeholder="you@mta.ca or you@umoncton.ca"
+          />
         </label>
-        <label>
-          Role
-          <select value={role} onChange={(event) => setRole(event.target.value as "teacher" | "student")}>
-            <option value="student">Student</option>
-            <option value="teacher">Teacher</option>
-          </select>
-        </label>
-        <button type="submit">Continue</button>
+        <button type="submit" disabled={loading}>
+          {loading ? "Checking…" : "Continue"}
+        </button>
         {error && <p className="error-text">{error}</p>}
       </form>
     </main>
@@ -355,7 +405,7 @@ function SignInScreen({ onSignedIn }: { onSignedIn: (user: SessionUser) => void 
 function TeacherPollCard({ onCreatePoll }: { onCreatePoll: (form: FormData) => Promise<void> }) {
   return (
     <section className="card">
-      <h2>Create office-hours poll</h2>
+      <h2>Create poll</h2>
       <form
         className="form"
         onSubmit={(event) => {
@@ -365,8 +415,15 @@ function TeacherPollCard({ onCreatePoll }: { onCreatePoll: (form: FormData) => P
         }}
       >
         <label>
+          Poll type
+          <select name="pollType" defaultValue="office_hours">
+            <option value="office_hours">Office hours</option>
+            <option value="general">General</option>
+          </select>
+        </label>
+        <label>
           Poll title
-          <input required name="title" placeholder="COMP-2931 Office Hours Availability" />
+          <input required name="title" placeholder="Week 5 Office Hours Availability" />
         </label>
         <div className="row">
           <label>
@@ -409,9 +466,14 @@ function TeacherReviewCard({
           <li key={poll.pollId}>
             <div>
               <strong>{poll.title}</strong>
-              <p className="muted">Closes: {prettyDate(poll.closesAtIso)}</p>
+              <p className="muted">
+                {poll.pollType === "office_hours" ? "Office hours" : "General"} · Closes:{" "}
+                {prettyDate(poll.closesAtIso)}
+              </p>
             </div>
-            <button onClick={() => void onSuggest(poll)}>Compute top two</button>
+            {poll.pollType === "office_hours" && (
+              <button onClick={() => void onSuggest(poll)}>Compute top two</button>
+            )}
           </li>
         ))}
       </ul>
@@ -421,16 +483,22 @@ function TeacherReviewCard({
 
 function StudentPollCard({
   polls,
+  classes,
   onSubmit
 }: {
   polls: OfficeHoursPoll[];
+  classes: ClassMembership[];
   onSubmit: (poll: OfficeHoursPoll, selectedKeys: string[]) => Promise<void>;
 }) {
   const [selectedMap, setSelectedMap] = useState<Record<string, string[]>>({});
+  const classByName = useMemo(
+    () => new Map(classes.map((c) => [c.classId, c.className])),
+    [classes]
+  );
 
   return (
     <section className="card">
-      <h2>Answer office-hours polls</h2>
+      <h2>Polls for your courses</h2>
       {polls.length === 0 && <p className="muted">No active polls yet.</p>}
       {polls.map((poll) => (
         <form
@@ -442,7 +510,11 @@ function StudentPollCard({
           }}
         >
           <h3>{poll.title}</h3>
-          <p className="muted">Slot length: {poll.slotMinutes} minutes</p>
+          <p className="muted">
+            {classByName.get(poll.classId) ?? poll.classId} ·{" "}
+            {poll.pollType === "office_hours" ? "Office hours" : "General"} · Slot length:{" "}
+            {poll.slotMinutes} minutes
+          </p>
           {poll.options.map((option) => {
             const key = `${option.day}: ${option.startHour}-${option.endHour}`;
             const selected = selectedMap[poll.pollId]?.includes(key) ?? false;
@@ -519,7 +591,15 @@ function StudentBookingCard({
   );
 }
 
-function TeacherAnnouncementCard({ onSubmit }: { onSubmit: (form: FormData) => Promise<void> }) {
+function TeacherAnnouncementCard({
+  classes,
+  activeClassId,
+  onSubmit
+}: {
+  classes: ClassMembership[];
+  activeClassId: string;
+  onSubmit: (form: FormData) => Promise<void>;
+}) {
   return (
     <section className="card">
       <h2>Send class announcement</h2>
@@ -531,6 +611,16 @@ function TeacherAnnouncementCard({ onSubmit }: { onSubmit: (form: FormData) => P
           event.currentTarget.reset();
         }}
       >
+        <label>
+          Course
+          <select name="classId" defaultValue={activeClassId} required>
+            {classes.map((c) => (
+              <option key={c.classId} value={c.classId}>
+                {c.className} ({c.classId})
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           Subject
           <input name="subject" required placeholder="Office hours reminder" />

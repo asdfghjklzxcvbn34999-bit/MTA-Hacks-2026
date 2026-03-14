@@ -5,6 +5,7 @@ import type {
   ClassMembership,
   OfficeHoursConfig,
   OfficeHoursPoll,
+  Person,
   PollResponse,
   SessionUser,
   Slot,
@@ -12,8 +13,11 @@ import type {
 } from "../types";
 
 interface DataStore {
+  getPersonByEmail(email: string): Promise<Person | null>;
+  getClassesByIds(classIds: string[]): Promise<ClassMembership[]>;
   listClasses(email: string): Promise<ClassMembership[]>;
   listPolls(classId: string): Promise<OfficeHoursPoll[]>;
+  listPollsForStudent(courseIds: string[]): Promise<OfficeHoursPoll[]>;
   createPoll(poll: OfficeHoursPoll): Promise<void>;
   savePollResponse(response: PollResponse): Promise<void>;
   suggestTopConfigs(pollId: string): Promise<SuggestedConfig[]>;
@@ -24,7 +28,35 @@ interface DataStore {
   saveAnnouncement(announcement: Announcement): Promise<void>;
 }
 
+const SEED_PEOPLE: Person[] = [
+  {
+    email: "teacher@mta.ca",
+    name: "Prof. Smith",
+    role: "teacher",
+    courseIds: ["comp-101", "math-210"]
+  },
+  {
+    email: "teacher2@umoncton.ca",
+    name: "Dr. Jones",
+    role: "teacher",
+    courseIds: ["math-210"]
+  },
+  {
+    email: "student@mta.ca",
+    name: "Alice Student",
+    role: "student",
+    courseIds: ["comp-101", "math-210"]
+  },
+  {
+    email: "student2@umoncton.ca",
+    name: "Bob Student",
+    role: "student",
+    courseIds: ["comp-101"]
+  }
+];
+
 type LocalState = {
+  people: Person[];
   classes: ClassMembership[];
   polls: OfficeHoursPoll[];
   responses: PollResponse[];
@@ -34,24 +66,19 @@ type LocalState = {
   announcements: Announcement[];
 };
 
-const LOCAL_KEY = "office-hours-local-state-v1";
+const LOCAL_KEY = "office-hours-local-state-v2";
+
+const DEFAULT_CLASSES: ClassMembership[] = [
+  { classId: "comp-101", className: "COMP 101", teacherEmail: "teacher@mta.ca" },
+  { classId: "math-210", className: "MATH 210", teacherEmail: "teacher2@umoncton.ca" }
+];
 
 function loadState(): LocalState {
   const raw = localStorage.getItem(LOCAL_KEY);
   if (!raw) {
     return {
-      classes: [
-        {
-          classId: "comp-101",
-          className: "COMP 101",
-          teacherEmail: "teacher@mta.ca"
-        },
-        {
-          classId: "math-210",
-          className: "MATH 210",
-          teacherEmail: "teacher2@umoncton.ca"
-        }
-      ],
+      people: SEED_PEOPLE,
+      classes: DEFAULT_CLASSES,
       polls: [],
       responses: [],
       configs: [],
@@ -60,7 +87,17 @@ function loadState(): LocalState {
       announcements: []
     };
   }
-  return JSON.parse(raw) as LocalState;
+  const parsed = JSON.parse(raw) as LocalState;
+  if (!parsed.people || parsed.people.length === 0) {
+    parsed.people = SEED_PEOPLE;
+  }
+  if (!parsed.classes || parsed.classes.length === 0) {
+    parsed.classes = DEFAULT_CLASSES;
+  }
+  for (const poll of parsed.polls ?? []) {
+    if (poll.pollType === undefined) poll.pollType = "office_hours";
+  }
+  return parsed;
 }
 
 function saveState(state: LocalState): void {
@@ -68,6 +105,27 @@ function saveState(state: LocalState): void {
 }
 
 class LocalDataStore implements DataStore {
+  async getPersonByEmail(email: string): Promise<Person | null> {
+    const normalized = email.trim().toLowerCase();
+    const person = loadState().people.find((p) => p.email.toLowerCase() === normalized);
+    return person ?? null;
+  }
+
+  async getClassesByIds(classIds: string[]): Promise<ClassMembership[]> {
+    const normalizedIds = classIds.filter(Boolean).map((id) => id.trim());
+    if (normalizedIds.length === 0) return [];
+    const set = new Set(normalizedIds.map((id) => id.toLowerCase()));
+    const found = loadState().classes.filter((c) => set.has(c.classId.toLowerCase()));
+    const foundIds = new Set(found.map((c) => c.classId.toLowerCase()));
+    const missing = normalizedIds.filter((id) => !foundIds.has(id.toLowerCase()));
+    const fallbacks: ClassMembership[] = missing.map((classId) => ({
+      classId,
+      className: classId,
+      teacherEmail: ""
+    }));
+    return [...found, ...fallbacks];
+  }
+
   async listClasses(_email: string): Promise<ClassMembership[]> {
     return loadState().classes;
   }
@@ -76,8 +134,21 @@ class LocalDataStore implements DataStore {
     return loadState().polls.filter((poll) => poll.classId === classId);
   }
 
+  async listPollsForStudent(courseIds: string[]): Promise<OfficeHoursPoll[]> {
+    const set = new Set(courseIds.map((id) => id.toLowerCase()));
+    return loadState().polls.filter((poll) => set.has(poll.classId.toLowerCase()));
+  }
+
   async createPoll(poll: OfficeHoursPoll): Promise<void> {
     const state = loadState();
+    if (poll.pollType === "office_hours") {
+      const existing = state.polls.some(
+        (p) => p.classId === poll.classId && p.pollType === "office_hours"
+      );
+      if (existing) {
+        throw new Error("This course already has an office-hours poll. Only one office-hours poll per course is allowed.");
+      }
+    }
     state.polls.push(poll);
     saveState(state);
   }
@@ -172,12 +243,24 @@ class AppsScriptDataStore implements DataStore {
     return (await response.json()) as T;
   }
 
+  getPersonByEmail(email: string): Promise<Person | null> {
+    return this.call("getPersonByEmail", { email });
+  }
+
+  getClassesByIds(classIds: string[]): Promise<ClassMembership[]> {
+    return this.call("getClassesByIds", { classIds });
+  }
+
   listClasses(email: string): Promise<ClassMembership[]> {
     return this.call("listClasses", { email });
   }
 
   listPolls(classId: string): Promise<OfficeHoursPoll[]> {
     return this.call("listPolls", { classId });
+  }
+
+  listPollsForStudent(courseIds: string[]): Promise<OfficeHoursPoll[]> {
+    return this.call("listPollsForStudent", { courseIds });
   }
 
   createPoll(poll: OfficeHoursPoll): Promise<void> {

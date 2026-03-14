@@ -1,9 +1,19 @@
 export type Role = "teacher" | "student";
 
+export type PollType = "office_hours" | "general";
+
+export interface Person {
+  email: string;
+  name: string;
+  role: Role;
+  courseIds: string[];
+}
+
 export interface SessionUser {
   email: string;
   role: Role;
   name: string;
+  myCourses: string[];
 }
 
 export interface ClassMembership {
@@ -22,6 +32,7 @@ export interface OfficeHoursPoll {
   pollId: string;
   classId: string;
   teacherEmail: string;
+  pollType: PollType;
   title: string;
   slotMinutes: number;
   daysPerWeek: number;
