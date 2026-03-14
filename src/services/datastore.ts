@@ -12,6 +12,25 @@ import type {
   SuggestedConfig
 } from "../types";
 
+/** Normalize backend Person response: sheet may return course1..course4 instead of courseIds. */
+function normalizePerson(raw: Record<string, unknown>): Person {
+  let courseIds: string[] = [];
+  if (Array.isArray(raw.courseIds) && raw.courseIds.every((c) => typeof c === "string")) {
+    courseIds = (raw.courseIds as string[]).map((c) => String(c).trim()).filter(Boolean);
+  } else {
+    const fromCols = [raw.course1, raw.course2, raw.course3, raw.course4]
+      .filter((c): c is string => typeof c === "string" && String(c).trim() !== "")
+      .map((c) => String(c).trim());
+    if (fromCols.length > 0) courseIds = fromCols;
+  }
+  return {
+    email: String(raw.email ?? "").trim().toLowerCase(),
+    name: String(raw.name ?? raw.email ?? "").trim(),
+    role: raw.role === "teacher" || raw.role === "student" ? raw.role : "student",
+    courseIds
+  };
+}
+
 interface DataStore {
   getPersonByEmail(email: string): Promise<Person | null>;
   getClassesByIds(classIds: string[]): Promise<ClassMembership[]>;
@@ -126,8 +145,11 @@ class LocalDataStore implements DataStore {
     return [...found, ...fallbacks];
   }
 
-  async listClasses(_email: string): Promise<ClassMembership[]> {
-    return loadState().classes;
+  async listClasses(email: string): Promise<ClassMembership[]> {
+    const normalized = email.trim().toLowerCase();
+    return loadState().classes.filter(
+      (c) => c.teacherEmail.trim().toLowerCase() === normalized
+    );
   }
 
   async listPolls(classId: string): Promise<OfficeHoursPoll[]> {
@@ -243,8 +265,10 @@ class AppsScriptDataStore implements DataStore {
     return (await response.json()) as T;
   }
 
-  getPersonByEmail(email: string): Promise<Person | null> {
-    return this.call("getPersonByEmail", { email });
+  async getPersonByEmail(email: string): Promise<Person | null> {
+    const raw = await this.call<Record<string, unknown> | null>("getPersonByEmail", { email });
+    if (!raw || !raw.email) return null;
+    return normalizePerson(raw);
   }
 
   getClassesByIds(classIds: string[]): Promise<ClassMembership[]> {

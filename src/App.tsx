@@ -54,7 +54,10 @@ export default function App() {
         }
       }
       if (effectiveUser.role === "teacher") {
-        const classMemberships = await dataStore.getClassesByIds(effectiveUser.myCourses);
+        let classMemberships = await dataStore.listClasses(effectiveUser.email);
+        if (classMemberships.length === 0 && effectiveUser.myCourses.length > 0) {
+          classMemberships = await dataStore.getClassesByIds(effectiveUser.myCourses);
+        }
         setClasses(classMemberships);
         if (classMemberships.length > 0) {
           const classId = classMemberships[0].classId;
