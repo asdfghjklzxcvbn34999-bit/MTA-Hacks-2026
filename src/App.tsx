@@ -140,9 +140,13 @@ export default function App() {
           }}
           onSetAvailability={async (courseId, ranges) => {
             resetMessage();
-            dataStore.setAvailability(courseId, ranges);
-            setStatus("Availability saved.");
-            void loadProfessorData();
+            try {
+              await dataStore.setAvailability(courseId, ranges);
+              setStatus("Availability saved.");
+              void loadProfessorData();
+            } catch (e) {
+              setError(e instanceof Error ? e.message : "Failed to save availability.");
+            }
           }}
         />
       ) : (
@@ -164,8 +168,12 @@ export default function App() {
           }}
           onSavePreferences={async (courseId, ranges) => {
             resetMessage();
-            dataStore.setPreferences(session.email, courseId, ranges);
-            setStatus("Availability saved.");
+            try {
+              await dataStore.setPreferences(session.email, courseId, ranges);
+              setStatus("Availability saved.");
+            } catch (e) {
+              setError(e instanceof Error ? e.message : "Failed to save availability.");
+            }
           }}
         />
       )}
@@ -342,14 +350,18 @@ function ProfessorAvailabilityForm({
   courseId: string;
   onSave: (courseId: string, ranges: TimeRange[]) => Promise<void>;
 }) {
-  const [ranges, setRanges] = useState<TimeRange[]>(() => {
-    const avail = createDataStore().getAvailability(courseId);
-    return avail?.timeRanges ?? [];
-  });
+  const [ranges, setRanges] = useState<TimeRange[]>([]);
 
   useEffect(() => {
-    const avail = createDataStore().getAvailability(courseId);
-    setRanges(avail?.timeRanges ?? []);
+    let cancelled = false;
+    createDataStore()
+      .getAvailability(courseId)
+      .then((avail) => {
+        if (!cancelled) setRanges(avail?.timeRanges ?? []);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [courseId]);
 
   function addRange(): void {
@@ -510,12 +522,18 @@ function StudentSchedulerForm({
   studentEmail: string;
   onSave: (courseId: string, ranges: TimeRange[]) => Promise<void>;
 }) {
-  const [ranges, setRanges] = useState<TimeRange[]>(() => {
-    return createDataStore().getPreferences(studentEmail, courseId);
-  });
+  const [ranges, setRanges] = useState<TimeRange[]>([]);
 
   useEffect(() => {
-    setRanges(createDataStore().getPreferences(studentEmail, courseId));
+    let cancelled = false;
+    createDataStore()
+      .getPreferences(studentEmail, courseId)
+      .then((prefs) => {
+        if (!cancelled) setRanges(prefs ?? []);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [courseId, studentEmail]);
 
   function addRange(): void {

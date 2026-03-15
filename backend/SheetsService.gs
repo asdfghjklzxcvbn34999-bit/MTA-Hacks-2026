@@ -7,6 +7,8 @@ var SHEET_NAMES = [
   'People',
   'Classes',
   'Roster',
+  'ProfessorAvailability',
+  'StudentPreferences',
   'Polls',
   'PollResponses',
   'OfficeHoursConfigs',

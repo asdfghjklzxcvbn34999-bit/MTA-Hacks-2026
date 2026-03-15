@@ -4,6 +4,19 @@
  */
 
 var ACTIONS = {
+  validateLogin: actionValidateLogin,
+  createUser: actionCreateUser,
+  listCoursesByTeacher: actionListCoursesByTeacher,
+  listAllCourses: actionListAllCourses,
+  createCourse: actionCreateCourse,
+  getAvailability: actionGetAvailability,
+  setAvailability: actionSetAvailability,
+  listEnrollmentsForCourse: actionListEnrollmentsForCourse,
+  listEnrollmentsForStudent: actionListEnrollmentsForStudent,
+  enroll: actionEnroll,
+  getPreferences: actionGetPreferences,
+  setPreferences: actionSetPreferences,
+  computeBestTimes: actionComputeBestTimes,
   getPersonByEmail: actionGetPersonByEmail,
   getClassesByIds: actionGetClassesByIds,
   listClasses: actionListClasses,

@@ -13,9 +13,11 @@ Create a new Google Sheet and add the following sheets (tabs) with these exact c
 
 | Sheet | Headers (row 1) |
 |-------|-----------------|
-| **People** | `email`, `name`, `role`, `course1`, `course2`, `course3`, `course4` |
-| **Classes** | `classId`, `className`, `teacherEmail`, `createdAt` |
+| **People** | `email`, `name`, `role`, `password`, `course1`, `course2`, `course3`, `course4` |
+| **Classes** | `classId`, `className`, `teacherEmail`, `term`, `createdAt` |
 | **Roster** | `classId`, `studentEmail`, `addedAt` |
+| **ProfessorAvailability** | `courseId`, `timeRangesJson` |
+| **StudentPreferences** | `studentEmail`, `courseId`, `timeRangesJson` |
 | **Polls** | `pollId`, `classId`, `teacherEmail`, `pollType`, `title`, `slotMinutes`, `daysPerWeek`, `closesAtIso`, `optionsJson`, `createdAt` |
 | **PollResponses** | `responseId`, `pollId`, `classId`, `studentEmail`, `selectedOptionKeysJson`, `submittedAtIso` |
 | **OfficeHoursConfigs** | `configId`, `classId`, `pollId`, `summary`, `slotMinutes`, `sessionsJson`, `chosenByTeacher`, `createdAt` |
@@ -26,19 +28,23 @@ Create a new Google Sheet and add the following sheets (tabs) with these exact c
 
 ### Seed data (optional)
 
-Add at least one row to **People** so users can sign in:
+Add at least one row to **People** so users can sign in (include `password` for frontend auth):
 
-| email | name | role | course1 | course2 | course3 | course4 |
-|-------|------|------|---------|---------|---------|---------|
-| teacher@mta.ca | Prof. Smith | teacher | comp-101 | math-210 | | |
-| student@mta.ca | Alice Student | student | comp-101 | math-210 | | |
+| email | name | role | password | course1 | course2 | course3 | course4 |
+|-------|------|------|----------|---------|---------|---------|---------|
+| teacher@mta.ca | Prof. Smith | teacher | password | comp-101 | math-210 | | |
+| teacher2@umoncton.ca | Dr. Jones | teacher | password | | | | |
+| student@mta.ca | Alice Student | student | password | comp-101 | math-210 | | |
+| student2@umoncton.ca | Bob Student | student | password | | | | |
 
-Add matching rows to **Classes**:
+Add matching rows to **Classes** (include `term`):
 
-| classId | className | teacherEmail | createdAt |
-|---------|-----------|--------------|-----------|
-| comp-101 | COMP 101 | teacher@mta.ca | (leave empty or ISO date) |
-| math-210 | MATH 210 | teacher@mta.ca | (leave empty or ISO date) |
+| classId | className | teacherEmail | term | createdAt |
+|---------|-----------|--------------|------|-----------|
+| comp-101 | COMP 101 | teacher@mta.ca | Spring 2026 | (leave empty or ISO date) |
+| math-210 | MATH 210 | teacher@mta.ca | Spring 2026 | (leave empty or ISO date) |
+
+**ProfessorAvailability** and **StudentPreferences** are created automatically when professors/students set availability or preferences. You do not need to add seed data to these sheets.
 
 ## 2. Create the Apps Script Project
 
@@ -93,6 +99,26 @@ You only need to run this once. The trigger will run `processClosedPolls` every 
 ## API Contract
 
 The frontend sends POST requests with JSON body: `{ "action": "<actionName>", ...payload }`.
+
+### Frontend-compatible actions (Office Hours Booking UI)
+
+| Action | Payload | Returns |
+|--------|---------|---------|
+| validateLogin | email, password | SessionUser or null |
+| createUser | user: { email, password, name, role } | void |
+| listCoursesByTeacher | teacherEmail | Course[] |
+| listAllCourses | — | Course[] |
+| createCourse | course: { courseId, name, teacherEmail, term } | void |
+| getAvailability | courseId | ProfessorAvailability or null |
+| setAvailability | courseId, timeRanges | void |
+| listEnrollmentsForCourse | courseId | string[] (student emails) |
+| listEnrollmentsForStudent | studentEmail | Course[] |
+| enroll | studentEmail, courseId | void |
+| getPreferences | studentEmail, courseId | TimeRange[] |
+| setPreferences | studentEmail, courseId, timeRanges | void |
+| computeBestTimes | courseId | BestTimeResult or null |
+
+### Legacy poll/slot actions (optional)
 
 | Action | Payload | Returns |
 |--------|---------|---------|

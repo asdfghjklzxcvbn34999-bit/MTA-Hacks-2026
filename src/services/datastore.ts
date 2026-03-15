@@ -60,13 +60,13 @@ export interface DataStore {
   listCoursesByTeacher(teacherEmail: string): Promise<Course[]>;
   listAllCourses(): Promise<Course[]>;
   createCourse(course: Course): Promise<void>;
-  getAvailability(courseId: string): ProfessorAvailability | null;
-  setAvailability(courseId: string, timeRanges: TimeRange[]): void;
+  getAvailability(courseId: string): Promise<ProfessorAvailability | null>;
+  setAvailability(courseId: string, timeRanges: TimeRange[]): Promise<void>;
   listEnrollmentsForCourse(courseId: string): Promise<string[]>;
   listEnrollmentsForStudent(studentEmail: string): Promise<Course[]>;
   enroll(studentEmail: string, courseId: string): Promise<void>;
-  getPreferences(studentEmail: string, courseId: string): TimeRange[];
-  setPreferences(studentEmail: string, courseId: string, timeRanges: TimeRange[]): void;
+  getPreferences(studentEmail: string, courseId: string): Promise<TimeRange[]>;
+  setPreferences(studentEmail: string, courseId: string, timeRanges: TimeRange[]): Promise<void>;
   computeBestTimes(courseId: string): Promise<BestTimeResult | null>;
 }
 
@@ -112,11 +112,13 @@ class LocalDataStore implements DataStore {
     saveState(state);
   }
 
-  getAvailability(courseId: string): ProfessorAvailability | null {
-    return loadState().professorAvailability.find((a) => a.courseId === courseId) ?? null;
+  getAvailability(courseId: string): Promise<ProfessorAvailability | null> {
+    return Promise.resolve(
+      loadState().professorAvailability.find((a) => a.courseId === courseId) ?? null
+    );
   }
 
-  setAvailability(courseId: string, timeRanges: TimeRange[]): void {
+  setAvailability(courseId: string, timeRanges: TimeRange[]): Promise<void> {
     const state = loadState();
     const idx = state.professorAvailability.findIndex((a) => a.courseId === courseId);
     const entry: ProfessorAvailability = { courseId, timeRanges };
@@ -126,6 +128,7 @@ class LocalDataStore implements DataStore {
       state.professorAvailability.push(entry);
     }
     saveState(state);
+    return Promise.resolve();
   }
 
   async listEnrollmentsForCourse(courseId: string): Promise<string[]> {
@@ -154,14 +157,14 @@ class LocalDataStore implements DataStore {
     saveState(state);
   }
 
-  getPreferences(studentEmail: string, courseId: string): TimeRange[] {
+  getPreferences(studentEmail: string, courseId: string): Promise<TimeRange[]> {
     const prefs = loadState().studentPreferences.find(
       (p) => p.studentEmail.toLowerCase() === studentEmail.toLowerCase() && p.courseId === courseId
     );
-    return prefs?.timeRanges ?? [];
+    return Promise.resolve(prefs?.timeRanges ?? []);
   }
 
-  setPreferences(studentEmail: string, courseId: string, timeRanges: TimeRange[]): void {
+  setPreferences(studentEmail: string, courseId: string, timeRanges: TimeRange[]): Promise<void> {
     const state = loadState();
     const normalizedEmail = studentEmail.trim().toLowerCase();
     const idx = state.studentPreferences.findIndex(
@@ -174,6 +177,7 @@ class LocalDataStore implements DataStore {
       state.studentPreferences.push(entry);
     }
     saveState(state);
+    return Promise.resolve();
   }
 
   async computeBestTimes(courseId: string): Promise<BestTimeResult | null> {
@@ -195,6 +199,11 @@ class LocalDataStore implements DataStore {
   }
 }
 
+import { createRemoteDataStore } from "./remoteDatastore";
+
 export function createDataStore(): DataStore {
+  if (appConfig.appsScriptUrl) {
+    return createRemoteDataStore();
+  }
   return new LocalDataStore();
 }
