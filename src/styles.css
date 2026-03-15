@@ -81,6 +81,18 @@ button.secondary {
   border-color: #64748b;
 }
 
+button.link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: #60a5fa;
+  text-decoration: underline;
+}
+
+button.link:hover {
+  color: #93c5fd;
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

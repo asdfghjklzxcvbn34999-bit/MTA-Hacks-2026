@@ -73,6 +73,8 @@ function actionCreateUser(payload) {
   var user = payload.user;
   if (!user) throw new Error('Missing user');
   if (!isAllowedEmail(user.email)) throw new Error('Invalid email domain');
+  var role = (user.role || 'student').toLowerCase();
+  if (role !== 'student') throw new Error('Only student accounts can be created.');
 
   var sheet = getSheet('People');
   ensureHeaders(sheet, PEOPLE_HEADERS);
@@ -85,7 +87,7 @@ function actionCreateUser(payload) {
   appendRow(sheet, [
     normalized,
     user.name || '',
-    user.role || 'student',
+    'student',
     (user.password || '').toString(),
     '', '', '', ''
   ]);
